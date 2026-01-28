@@ -1,0 +1,15 @@
+Flask
+Werkzeug
+openai
+requests
+azure-identity
+python-dotenv
+Pillow
+numpy
+pandas
+opencv-python
+ffmpeg
+PyPDF2
+gunicorn
+torch
+ffmpeg-python

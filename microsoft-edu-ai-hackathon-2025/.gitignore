@@ -1,0 +1,49 @@
+# ==============================
+# 1. Frontend (React + Vite)
+# ==============================
+node_modules/
+dist/
+dist-ssr/
+*.tsbuildinfo
+npm-debug.log*
+
+# ==============================
+# 2. Backend (Python + Flask)
+# ==============================
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+.venv/
+venv/
+env/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# ==============================
+# 3. Uživatelská data a Uploady
+# ==============================
+# Důležité: Ignoruje složku, kam se ukládají videa a obrázky uživatelů
+uploads/
+test.csv
+
+# ==============================
+# 4. Tajné klíče a konfigurace
+# ==============================
+.env
+.env.*
+!.env.example
+
+# ==============================
+# 5. Systémové soubory (macOS)
+# ==============================
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# ==============================
+# 6. Nastavení editorů (VS Code apod.)
+# ==============================
+.vscode/
+.idea/

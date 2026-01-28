@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FeatureLab Analysis</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="container">
+    <h1>FeatureLab Analysis</h1>
+    <form id="analysis-form" enctype="multipart/form-data">
+      <label for="files">Upload files:</label>
+      <input type="file" id="files" name="files" multiple required><br><br>
+
+      <label for="output_formats">Output formats (comma separated):</label>
+      <input type="text" id="output_formats" name="output_formats" placeholder="json,csv,xlsx"><br><br>
+
+      <label for="description">Description (optional):</label>
+      <textarea id="description" name="description"></textarea><br><br>
+
+      <label for="model_provider" class="dropdown-label">Model Provider:</label>
+      <select id="model_provider" name="model_provider" class="minimal-dropdown">
+        <option value="azure">Azure OpenAI</option>
+        <option value="groq_llama">Groq Cloud</option>
+        <option value="ollama_qwen">Qwen 2.5 (Local)</option>
+        <option value="ollama_llama">Llama 3.2 (Local)</option>
+      </select><br><br>
+
+      <button type="submit">Analyze</button>
+    </form>
+    <div id="result"></div>
+  </div>
+
+  <script>
+    document.getElementById('analysis-form').addEventListener('submit', async function(e) {
+      e.preventDefault();
+      const form = e.target;
+      const formData = new FormData();
+      for (const file of form.files.files) {
+        formData.append('files', file);
+      }
+      formData.append('output_formats', form.output_formats.value);
+      formData.append('description', form.description.value);
+      formData.append('model_provider', form.model_provider.value);
+      const res = await fetch('/upload', {
+        method: 'POST',
+        body: formData
+      });
+      const data = await res.json();
+      document.getElementById('result').textContent = JSON.stringify(data, null, 2);
+    });
+  </script>
+</body>
+</html>

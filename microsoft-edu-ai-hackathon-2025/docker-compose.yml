@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  # --- BACKEND (Python Flask) ---
+  webapp:
+    build:
+      context: ./backend      # <--- TOTO JE TA HLAVNÍ OPRAVA (bývalo to jen build: .)
+      dockerfile: Dockerfile
+    ports:
+      - "5000:5000"
+    environment:
+      - LLM_BASE_URL=http://ollama:11434/v1
+    env_file:                 # <--- PŘIDÁNO: Načte klíče (Azure, Mistral...) ze souboru .env
+      - .env
+    volumes:
+      - ./backend/uploads:/app/uploads  # Mapuje složku uploads, aby data zůstala i po restartu
+    depends_on:
+      - ollama
+
+  # --- AI MODEL SERVER (Ollama) ---
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama # Použijeme raději named volume (čistší řešení)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+# Definice volume pro Ollamu
+volumes:
+  ollama_data:
