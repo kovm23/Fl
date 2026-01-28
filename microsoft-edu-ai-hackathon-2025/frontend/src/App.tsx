@@ -49,7 +49,7 @@ interface BackendOk {
 // Config & helpers
 // =====================
 
-const API_URL = import.meta?.env?.VITE_UPLOAD_ENDPOINT || "/upload";
+const API_URL = "http://localhost:5000/upload";
 
 // Optional status polling if BE supports it
 const API_BASE = (import.meta?.env?.VITE_API_BASE as string) || "";

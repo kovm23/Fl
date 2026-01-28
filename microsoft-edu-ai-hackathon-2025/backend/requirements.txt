@@ -1,5 +1,6 @@
-Flask
-Werkzeug
+flask
+flask-cors
+werkzeug
 openai
 requests
 azure-identity
@@ -13,3 +14,4 @@ PyPDF2
 gunicorn
 torch
 ffmpeg-python
+faster-whisper

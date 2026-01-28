@@ -1,37 +1,32 @@
-version: '3.8'
-
 services:
-  # --- BACKEND (Python Flask) ---
+  # Webový frontend dostupný na http://localhost
+  frontend:
+    build:
+      context: ./frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - webapp
+
+  # Python backend na portu 5000
   webapp:
     build:
-      context: ./backend      # <--- TOTO JE TA HLAVNÍ OPRAVA (bývalo to jen build: .)
+      context: ./backend
       dockerfile: Dockerfile
     ports:
       - "5000:5000"
-    environment:
-      - LLM_BASE_URL=http://ollama:11434/v1
-    env_file:                 # <--- PŘIDÁNO: Načte klíče (Azure, Mistral...) ze souboru .env
-      - .env
     volumes:
-      - ./backend/uploads:/app/uploads  # Mapuje složku uploads, aby data zůstala i po restartu
+      - ./backend/uploads:/app/uploads
     depends_on:
       - ollama
 
-  # --- AI MODEL SERVER (Ollama) ---
+  # AI engine
   ollama:
     image: ollama/ollama:latest
     ports:
       - "11434:11434"
     volumes:
-      - ollama_data:/root/.ollama # Použijeme raději named volume (čistší řešení)
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
+      - ollama_data:/root/.ollama
 
-# Definice volume pro Ollamu
 volumes:
   ollama_data:
