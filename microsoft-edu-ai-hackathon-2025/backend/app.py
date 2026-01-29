@@ -8,81 +8,71 @@ app = Flask(__name__)
 CORS(app)
 
 ALLOWED_EXTENSIONS = {
-    'text': {'pdf', 'txt', 'md', 'csv'},
-    'image': {'png', 'jpg', 'jpeg'},
-    'video': {'mp4', 'avi', 'mov', 'mkv'},
-    'zip': {'zip'}
+    "text": {"pdf", "txt", "md", "csv"},
+    "image": {"png", "jpg", "jpeg"},
+    "video": {"mp4", "avi", "mov", "mkv"},
+    "zip": {"zip"},
 }
-UPLOAD_FOLDER = 'uploads'
+UPLOAD_FOLDER = "uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
+
 def allowed_file(filename, allowed_exts):
-    return '.' in filename and filename.rsplit('.', 1)[1].lower() in allowed_exts
+    return "." in filename and filename.rsplit(".", 1)[1].lower() in allowed_exts
 
-@app.route('/health', methods=['GET'])
-def health():
-    return jsonify(status='ok'), 200
 
-# --- NOVÉ: Routa pro stahování souborů (Audio MP3) ---
-@app.route('/uploads/<path:filename>', methods=['GET'])
+@app.route("/uploads/<path:filename>", methods=["GET"])
 def download_file(filename):
     return send_from_directory(UPLOAD_FOLDER, filename)
-    
-@app.route('/upload', methods=['POST'])
+
+
+@app.route("/upload", methods=["POST"])
 def upload_files():
-    files = request.files.getlist('files')
-    if not files or len(files) == 0:
-        return jsonify({'error': 'No files uploaded'}), 400
-        
+    files = request.files.getlist("files")
+    if not files:
+        return jsonify({"error": "No files"}), 400
+
     # Detekce typu
-    file_types_detected = set()
+    detected_type = None
     for f in files:
-        ext = f.filename.rsplit('.', 1)[-1].lower() if '.' in f.filename else ''
-        for type_name, allowed_exts in ALLOWED_EXTENSIONS.items():
-            if ext in allowed_exts:
-                file_types_detected.add(type_name)
-                break
-                
-    if len(file_types_detected) != 1:
-        return jsonify({'error': 'Single file type allowed per upload'}), 400
-        
-    file_type = file_types_detected.pop()
-    
-    # Save files
-    saved_files = []
+        ext = f.filename.split(".")[-1].lower()
+        for t, exts in ALLOWED_EXTENSIONS.items():
+            if ext in exts:
+                if detected_type and detected_type != t:
+                    return jsonify({"error": "Mixed types not allowed"}), 400
+                detected_type = t
+
+    if not detected_type:
+        return jsonify({"error": "Unknown file type"}), 400
+
+    saved_paths = []
     for f in files:
-        if allowed_file(f.filename, ALLOWED_EXTENSIONS[file_type]):
-            filename = secure_filename(f.filename)
-            save_path = os.path.join(UPLOAD_FOLDER, filename)
-            f.save(save_path)
-            saved_files.append(filename)
+        fname = secure_filename(f.filename)
+        path = os.path.join(UPLOAD_FOLDER, fname)
+        f.save(path)
+        saved_paths.append(path)
 
-    # Parametry z formuláře
-    output_formats = request.form.get('output_formats', '')
-    if output_formats:
-        output_formats = [fmt.strip() for fmt in output_formats.split(',') if fmt.strip()]
-    
-    description = request.form.get('description', None)
-    
-    # Načtení vybraného modelu
-    selected_model = request.form.get('model', 'gpt-4o') 
+    # Parametry
+    formats = request.form.get("output_formats", "").split(",")
+    desc = request.form.get("description", "")
+    model = request.form.get("model", "gpt-4o")
 
-    # Process
+    # NOVÉ: Kategorie pro RuleKit
+    categories = request.form.get("categories", "")
+
     try:
-        processing_result = process_files(
-            [os.path.join(UPLOAD_FOLDER, fname) for fname in saved_files],
-            file_type,
-            output_formats=output_formats,
-            description=description,
-            model_name=selected_model
+        result = process_files(
+            saved_paths,
+            detected_type,
+            output_formats=formats,
+            description=desc,
+            model_name=model,
+            categories=categories,  # Předáváme dál
         )
-        return jsonify({
-            'message': 'Success', 
-            'model_used': selected_model,
-            'processing': processing_result
-        }), 200
+        return jsonify({"message": "OK", "processing": result})
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
-if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000)
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000)

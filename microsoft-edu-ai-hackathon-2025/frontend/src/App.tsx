@@ -30,11 +30,12 @@ import {
   Moon,
   Sun,
   ChevronDown,
-  Cpu
+  Cpu,
+  Tags // Ikona pro kategorie
 } from "lucide-react";
 
 // =====================
-// KONFIGURACE MODELŮ (Upraveno pro tvůj server)
+// KONFIGURACE MODELŮ
 // =====================
 const AVAILABLE_MODELS = [
   { id: "gpt-4o", name: "Azure OpenAI", type: "cloud" },
@@ -60,8 +61,6 @@ interface BackendOk {
 // =====================
 
 const API_URL = import.meta?.env?.VITE_UPLOAD_ENDPOINT || "/upload";
-
-// Optional status polling if BE supports it
 const API_BASE = (import.meta?.env?.VITE_API_BASE as string) || "";
 const STATUS_URL = (jobId: string) => `${API_BASE}/status/${encodeURIComponent(jobId)}`;
 
@@ -186,6 +185,17 @@ function getProcType(proc: any): FileType | undefined {
 function getTranscript(proc: any): string | null {
   if (!proc) return null;
 
+  // Zkusíme najít 'transcriptions' z dict struktury (nová logika pro vícero souborů)
+  if (proc.tabular_output) {
+      // Vezmeme první soubor, pokud jich je více, spojíme je
+      const transcripts = Object.values(proc.tabular_output)
+          .map((v: any) => v.transcript)
+          .filter(Boolean)
+          .join('\n\n--- NEXT FILE ---\n\n');
+      if (transcripts) return transcripts;
+  }
+
+  // Fallback pro starší strukturu
   if (proc.transcriptions && typeof proc.transcriptions === 'object') {
     return Object.values(proc.transcriptions).join('\n\n--- NEXT FILE ---\n\n');
   }
@@ -233,7 +243,7 @@ function mergeFiles(existing: File[], incoming: File[]): File[] {
 }
 
 // =====================
-// Optional Guide (on-demand only)
+// Guide
 // =====================
 function Guide({ open, onClose }: { open: boolean; onClose: () => void }) {
   if (!open) return null;
@@ -248,16 +258,12 @@ function Guide({ open, onClose }: { open: boolean; onClose: () => void }) {
         <CardContent className="space-y-3 text-sm leading-relaxed text-slate-800 dark:text-slate-100">
           <div className="rounded-lg p-3 bg-slate-50 dark:bg-white/5">
             <b>1) Připrav si soubory</b> — nahraj vždy <i>jeden typ</i> (PDF <b>nebo</b> obrázky <b>nebo</b> video <b>nebo</b> ZIP).
-            Do ZIPu vlož jen jeden typ (např. jen obrázky).
           </div>
           <div className="rounded-lg p-3 bg-slate-50 dark:bg-white/5">
-            <b>2) Vyber Model</b> — Pro nejlepší výsledky zvol Qwen 2.5 nebo Llavu 34B.
+            <b>2) Klasifikace (NOVÉ)</b> — Zadej kategorie (např. "Podvod, Pravda"), pokud chceš video automaticky roztřídit.
           </div>
           <div className="rounded-lg p-3 bg-slate-50 dark:bg-white/5">
-            <b>3) Volitelný popis</b> — napiš kontext, co tě zajímá. Pomáhá to modelu vybrat lepší atributy.
-          </div>
-          <div className="rounded-lg p-3 bg-slate-50 dark:bg-white/5">
-            <b>4) Spusť extrakci</b> — pokud backend vrací progress, uvidíš ho zde.
+            <b>3) Spusť extrakci</b> — Vyber si model (Qwen 2.5 je doporučený).
           </div>
           <div className="pt-2">
             <Button onClick={onClose} className="w-full">Rozumím</Button>
@@ -280,6 +286,8 @@ export default function MediaFeatureLabPro() {
   const [response, setResponse] = useState<BackendOk | null>(null);
 
   const [description, setDescription] = useState("");
+  const [categories, setCategories] = useState("");
+
   const [formats, setFormats] = useState<{ json: boolean; csv: boolean; xlsx: boolean; xml: boolean }>({
     json: true,
     csv: false,
@@ -404,9 +412,9 @@ export default function MediaFeatureLabPro() {
       if (outputFormatsString) form.append("output_formats", outputFormatsString);
       if (description.trim()) form.append("description", description.trim());
       
-      // --- OPRAVA: Backend čeká klíč 'model', ne 'model_provider' ---
       form.append("model", modelProvider);
       form.append("file_type", fileType);
+      form.append("categories", categories);
 
       const res = await fetch(API_URL, { method: "POST", body: form, signal: ctrl.signal });
       if (!res.ok) {
@@ -416,10 +424,14 @@ export default function MediaFeatureLabPro() {
       
       const jsonRaw = await res.json();
       
+      // --- ZDE BYLA CHYBA: Backend vrací obálku s klíčem 'processing' ---
+      // Předtím jsme přiřadili celou odpověď do 'processing', čímž vznikl double nesting.
+      // Opraveno:
       const wrappedJson: BackendOk = {
         message: "Analysis successful",
         files: files.map(f => f.name),
-        processing: jsonRaw 
+        // Nyní správně vytahujeme vnitřní objekt 'processing', kde jsou 'outputs'
+        processing: jsonRaw.processing 
       };
 
       // Real progress via job_id (pokud to backend podporuje)
@@ -476,6 +488,7 @@ export default function MediaFeatureLabPro() {
     setFileType(null);
     setError(null);
     setResponse(null);
+    setCategories(""); // Reset kategorii
     setProgress(0);
     setProgressLabel("");
     setHasRealProgress(false);
@@ -648,10 +661,29 @@ export default function MediaFeatureLabPro() {
                     value={description}
                     onChange={(e) => setDescription(e.target.value)}
                     rows={3}
-                    className={`w-full rounded-xl border p-3 text-[13px] ${deluxe ? "bg-transparent border-white/20 text-white" : "bg-white border-slate-300 text-slate-900"}`}
+                    className={`w-full rounded-xl border p-3 text-[13px] ${deluxe ? "bg-transparent border-white/20 text-white placeholder:text-slate-500" : "bg-white border-slate-300 text-slate-900 placeholder:text-slate-400"}`}
                     placeholder="Kontext datasetu, co má LLM zohlednit…"
                   />
+                  
+                  {/* NOVÉ POLE PRO KATEGORIE - Design 1:1 jako Description */}
+                  <div className="mt-3">
+                    <Label className={deluxe ? "text-slate-200" : ""}>Klasifikace (RuleKit) <span className="opacity-50 font-normal text-xs ml-1">(volitelně)</span></Label>
+                    <div className="relative mt-1">
+                      <input
+                        type="text"
+                        value={categories}
+                        onChange={(e) => setCategories(e.target.value)}
+                        className={`w-full rounded-xl border p-3 pr-10 text-[13px] outline-none ${deluxe ? "bg-transparent border-white/20 text-white placeholder:text-slate-500" : "bg-white border-slate-300 text-slate-900 placeholder:text-slate-400"}`}
+                        placeholder="Např: Politika, Sport, Reklama, Podvod (oddělené čárkou)..."
+                      />
+                      <Tags className={`absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 pointer-events-none ${deluxe ? "text-slate-500" : "text-slate-400"}`} />
+                    </div>
+                     <p className={`text-[11px] mt-1.5 ${deluxe ? "text-slate-400" : "text-slate-500"}`}>
+                        Zadejte kategorie pro automatické třídění. Výstup bude obsahovat atributy pro trénování RuleKitu.
+                    </p>
+                  </div>
                 </div>
+                
                 <div className="space-y-2">
                   <Label className={deluxe ? "text-slate-200" : ""}>Formáty výstupu</Label>
                   <div className="flex flex-wrap gap-3 text-sm">

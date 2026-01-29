@@ -14,3 +14,4 @@ faster-whisper
 torch
 torchaudio
 torchvision
+flask_cors
