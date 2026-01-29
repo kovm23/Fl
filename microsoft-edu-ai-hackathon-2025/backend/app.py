@@ -1,12 +1,14 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 import os
 from werkzeug.utils import secure_filename
 from services.processing import process_files
+from flask_cors import CORS
 
 app = Flask(__name__)
+CORS(app)
 
 ALLOWED_EXTENSIONS = {
-    'text': {'pdf', 'txt'},
+    'text': {'pdf', 'txt', 'md', 'csv'},
     'image': {'png', 'jpg', 'jpeg'},
     'video': {'mp4', 'avi', 'mov', 'mkv'},
     'zip': {'zip'}
@@ -20,6 +22,11 @@ def allowed_file(filename, allowed_exts):
 @app.route('/health', methods=['GET'])
 def health():
     return jsonify(status='ok'), 200
+
+# --- NOVÉ: Routa pro stahování souborů (Audio MP3) ---
+@app.route('/uploads/<path:filename>', methods=['GET'])
+def download_file(filename):
+    return send_from_directory(UPLOAD_FOLDER, filename)
     
 @app.route('/upload', methods=['POST'])
 def upload_files():
@@ -57,8 +64,7 @@ def upload_files():
     
     description = request.form.get('description', None)
     
-    # --- NOVÉ: Načtení vybraného modelu ---
-    # Default je 'gpt-4o', pokud frontend nic nepošle
+    # Načtení vybraného modelu
     selected_model = request.form.get('model', 'gpt-4o') 
 
     # Process
@@ -68,7 +74,7 @@ def upload_files():
             file_type,
             output_formats=output_formats,
             description=description,
-            model_name=selected_model  # Předáváme dál
+            model_name=selected_model
         )
         return jsonify({
             'message': 'Success', 
