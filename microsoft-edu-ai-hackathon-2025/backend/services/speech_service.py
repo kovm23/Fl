@@ -1,77 +1,125 @@
 import os
-import logging
+import requests
 import ffmpeg
+import time
+from typing import Literal
+from dotenv import load_dotenv
 from faster_whisper import WhisperModel
 
-logger = logging.getLogger(__name__)
+load_dotenv()
 
-# Nastavení modelu (použije malý a rychlý model, pro lepší češtinu zkuste "medium")
-MODEL_SIZE = "base"
-# Pokud máte GPU, změňte device na "cuda", jinak "cpu"
-DEVICE = "cpu" 
-COMPUTE_TYPE = "int8"
+# Globální proměnná pro uložení načteného modelu (aby se nenačítal při každém requestu)
+local_whisper_model = None
 
-def extract_audio_from_video(video_path: str, audio_path: str):
-    """
-    Separuje audio stopu z videa a uloží ji jako MP3/WAV.
-    """
-    try:
-        (
-            ffmpeg
-            .input(video_path)
-            .output(audio_path, ac=1, ar='16k') # Mono, 16kHz (ideální pro Whisper)
-            .overwrite_output()
-            .run(quiet=True)
-        )
-        return True
-    except ffmpeg.Error as e:
-        logger.error(f"FFmpeg error: {e.stderr.decode('utf8')}")
-        return False
+def get_local_whisper():
+    """Načte model do VRAM pouze jednou (Singleton pattern)."""
+    global local_whisper_model
+    if local_whisper_model is None:
+        print("Loading Local Whisper Large-v3 model to GPU... (this may take a moment)")
+        # 'large-v3' je nejlepší open-source model, na 40GB VRAM běží s prstem v nose
+        # compute_type="float16" výrazně zrychluje na NVIDIA GPU
+        local_whisper_model = WhisperModel("large-v3", device="cuda", compute_type="float16")
+    return local_whisper_model
 
-def transcribe_video_file(video_path: str) -> str:
+def transcribe_video_file(file_path: str, model_choice: str = "azure") -> str:
     """
-    Hlavní funkce: Vytáhne audio a přepíše ho do textu s časovými značkami.
+    Transcribes video file.
+    If model_choice contains 'gpt' or 'azure', uses Azure Speech API.
+    Otherwise (for local models), uses local Faster-Whisper on GPU.
     """
-    # 1. Cesta pro dočasné audio
-    audio_path = os.path.splitext(video_path)[0] + ".wav"
     
-    # 2. Extrakce audia
-    if not extract_audio_from_video(video_path, audio_path):
-        return "[CHYBA: Nepodařilo se extrahovat audio z videa]"
+    # --- 1. LOKÁLNÍ PŘEPIS (Pokud není vybrán Azure/GPT) ---
+    is_azure = "gpt" in model_choice.lower() or "azure" in model_choice.lower()
+    
+    if not is_azure:
+        try:
+            if not os.path.exists(file_path):
+                return f"File not found: {file_path}"
+            
+            print(f"Starting local transcription for {os.path.basename(file_path)}...")
+            model = get_local_whisper()
+            
+            # Faster-whisper umí číst video soubory přímo, nemusíme extrahovat audio přes ffmpeg manuálně
+            # beam_size=5 zvyšuje přesnost
+            segments, info = model.transcribe(file_path, beam_size=5, language=None, task="transcribe")
+            
+            # Spojení segmentů do jednoho textu
+            full_text = "".join([segment.text for segment in segments])
+            print("Local transcription finished.")
+            return full_text
+            
+        except Exception as e:
+            return f"Local transcription failed: {str(e)}"
+
+    # --- 2. AZURE PŘEPIS (Původní kód) ---
+    endpoint = os.getenv("SPEECH_AZURE_OPENAI_ENDPOINT")
+    api_key = os.getenv("SPEECH_AZURE_OPENAI_API_KEY")
+    api_version = os.getenv("SPEECH_AZURE_OPENAI_API_VERSION")
+
+    if not endpoint or not api_key:
+        return "Speech service is not configured."
+
+    # Defaultně fast, pokud není specifikováno jinak v env
+    deployment = os.getenv("SPEECH_GPT4O_MINI_TRANSCRIBE_DEPLOYMENT_NAME")
+
+    if not deployment:
+        return "Deployment for speech not found in ENV."
+
+    if not os.path.exists(file_path):
+        return f"File not found: {file_path}"
+
+    video_extensions = ['.mp4', '.mov', '.avi', '.mkv']
+    path_to_process = file_path
+    temp_audio_path = None
 
     try:
-        # 3. Načtení Whisper modelu
-        logger.info(f"Loading Whisper model: {MODEL_SIZE} on {DEVICE}...")
-        model = WhisperModel(MODEL_SIZE, device=DEVICE, compute_type=COMPUTE_TYPE)
+        _, extension = os.path.splitext(file_path.lower())
+        # Pokud je to video, vytáhneme audio pro Azure (Azure má limit na velikost)
+        if extension in video_extensions:
+            base_name = os.path.splitext(os.path.basename(file_path))[0]
+            temp_audio_path = os.path.join('uploads', f"temp_audio_{base_name}_{int(time.time())}.wav")
 
-        # 4. Transkripce
-        segments, info = model.transcribe(audio_path, beam_size=5)
-        
-        logger.info(f"Detected language '{info.language}' with probability {info.language_probability}")
+            try:
+                ffmpeg.input(file_path).output(
+                    temp_audio_path, acodec='pcm_s16le', ac=1, ar='16k'
+                ).run(quiet=True, overwrite_output=True)
+            except ffmpeg.Error as e:
+                error_details = e.stderr.decode('utf8') if e.stderr else 'Unknown FFmpeg error'
+                return f"Failed to extract audio from video: {error_details}"
 
-        # 5. Formátování výstupu s časovými značkami
-        # Výstup bude vypadat např.: "[00:00 -> 00:05] Dobrý den, vítám vás."
-        transcript_lines = []
-        for segment in segments:
-            start = format_timestamp(segment.start)
-            end = format_timestamp(segment.end)
-            line = f"[{start} -> {end}] {segment.text}"
-            transcript_lines.append(line)
+            path_to_process = temp_audio_path
 
-        full_transcript = "\n".join(transcript_lines)
-        return full_transcript
+        # Určení Content-Type
+        lower_case_path = path_to_process.lower()
+        if lower_case_path.endswith(".mp4") or lower_case_path.endswith(".m4a"):
+            content_type = "audio/mp4"
+        elif lower_case_path.endswith(".mp3") or lower_case_path.endswith(".mpeg"):
+            content_type = "audio/mpeg"
+        elif lower_case_path.endswith(".wav"):
+            content_type = "audio/wav"
+        else:
+            content_type = "application/octet-stream"
+
+        url = f"{endpoint}openai/deployments/{deployment}/audio/transcriptions?api-version={api_version}"
+        with open(path_to_process, "rb") as f:
+            response = requests.post(
+                url,
+                headers={"api-key": api_key},
+                files={"file": (os.path.basename(path_to_process), f, content_type)},
+                data={"model": "gpt-4o-transcribe", "response_format": "json"},
+                timeout=300,
+            )
+
+        if response.status_code != 200:
+            return f"Transcription failed ({response.status_code}): {response.text}"
+
+        return response.json().get("text", "(no text found)")
 
     except Exception as e:
-        logger.error(f"Whisper transcription error: {e}")
-        return f"[CHYBA PŘEPISU: {str(e)}]"
-    
+        return f"An error occurred during the API call: {e}"
     finally:
-        # Úklid: smazání dočasného audio souboru
-        if os.path.exists(audio_path):
-            os.remove(audio_path)
-
-def format_timestamp(seconds: float) -> str:
-    """Převede sekundy (např. 75.5) na formát MM:SS (01:15)."""
-    m = int(seconds // 60)
-    s = int(seconds % 60)
-    return f"{m:02d}:{s:02d}"
+        if temp_audio_path and os.path.exists(temp_audio_path):
+            try:
+                os.remove(temp_audio_path)
+            except:
+                pass
