@@ -1,17 +1,14 @@
 # processing.py - Modular file processing service
 
 import os
-import time
 import json
 import base64
 import io
-import random
-import shutil
-import zipfile
 import logging
-from string import Template
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import List, Optional, Any, Tuple, Dict, Callable
+import zipfile
+import shutil
+import time
+from typing import List, Optional, Any, Tuple, Dict
 
 import cv2
 import numpy as np
@@ -34,7 +31,6 @@ ALLOWED_EXTENSIONS = {
     "image": {"png", "jpg", "jpeg"},
     "video": {"mp4", "avi", "mov", "mkv"},
 }
-MAX_PARALLEL_WORKERS: int = 5
 VALID_OUTPUT_FORMATS = {"json", "csv", "xlsx", "xml"}
 VIDEO_KEY_FRAME_LIMIT = 8
 
@@ -64,29 +60,21 @@ VIDEO_ANALYSIS_TEMPLATE = (
 
 
 def create_dataframe_from_tabular(tabular_output: Dict[str, Any]) -> pd.DataFrame:
-    """
-    Převede hierarchický JSON na plochou tabulku pro CSV/Excel.
-    Klíčové pro RuleKit - vytahuje atributy do samostatných sloupců.
-    """
     rows = []
     for filename, data in tabular_output.items():
         if isinstance(data, dict):
-            # Základní metadata
             row = {
                 "filename": filename,
-                "transcript": data.get("transcript", "")[:100]
-                + "...",  # Zkráceno pro CSV
+                "transcript": data.get("transcript", "")[:100] + "...",
                 "audio_file": data.get("audio_file", ""),
             }
 
-            # Pokud máme analýzu, rozbalíme ji
             analysis = data.get("analysis", {})
             if isinstance(analysis, dict):
                 row["classification"] = analysis.get("classification", "Unknown")
                 row["summary"] = analysis.get("summary", "")
                 row["reasoning"] = analysis.get("reasoning", "")
 
-                # Flatten attributes (attr_sentiment, attr_urgency...)
                 attrs = analysis.get("attributes", {})
                 for k, v in attrs.items():
                     row[f"attr_{k}"] = v
@@ -100,7 +88,6 @@ def _format_outputs(tabular_output: Dict, output_formats: List[str]) -> Dict[str
     if not tabular_output:
         return {"json": "{}"}
 
-    # Pro formáty jako CSV/XLSX chceme plochou tabulku (aby to šlo do RuleKitu)
     df = create_dataframe_from_tabular(tabular_output)
 
     for fmt in [f.lower() for f in output_formats if f in VALID_OUTPUT_FORMATS]:
@@ -136,10 +123,13 @@ def extract_key_frames_with_timestamps(
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         return []
+
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     fps = cap.get(cv2.CAP_PROP_FPS)
+
     if total == 0 or fps == 0:
         return []
+
     step = max(1, total // frame_limit)
     res = []
     for i in range(0, total, step):
@@ -149,6 +139,7 @@ def extract_key_frames_with_timestamps(
             res.append((frame, round(i / fps, 2)))
         if len(res) >= frame_limit:
             break
+
     cap.release()
     return res
 
@@ -234,17 +225,41 @@ def process_files(
 
     if file_type == "video":
         for path in file_paths:
-            # Předáváme categories do single video processingu
             res = _process_single_video(path, model_name, description or "", categories)
             tabular_output[res["filename"]] = res
 
     elif file_type == "image":
-        # Zachování původní logiky pro obrázky
         for path in file_paths:
-            # Zde by se volala původní image funkce, pro stručnost placeholder
             tabular_output[os.path.basename(path)] = {
                 "status": "Image processing not modified in this update"
             }
+
+    # ZIP processing
+    elif file_type == "zip":
+        for zip_path in file_paths:
+            temp_dir = os.path.join(
+                os.path.dirname(zip_path), f"temp_unzip_{int(time.time())}"
+            )
+            os.makedirs(temp_dir, exist_ok=True)
+
+            try:
+                with zipfile.ZipFile(zip_path, "r") as zip_ref:
+                    zip_ref.extractall(temp_dir)
+
+                for root, _, filenames in os.walk(temp_dir):
+                    for f in filenames:
+                        if f.lower().endswith(tuple(ALLOWED_EXTENSIONS["video"])):
+                            full_path = os.path.join(root, f)
+                            res = _process_single_video(
+                                full_path, model_name, description or "", categories
+                            )
+                            tabular_output[res["filename"]] = res
+
+            except Exception as e:
+                logger.error(f"Failed to process zip {zip_path}: {e}")
+                tabular_output[os.path.basename(zip_path)] = {"error": str(e)}
+            finally:
+                shutil.rmtree(temp_dir, ignore_errors=True)
 
     return {
         "status": "processed",
