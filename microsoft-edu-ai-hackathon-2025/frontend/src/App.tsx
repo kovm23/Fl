@@ -667,7 +667,7 @@ export default function MediaFeatureLabPro() {
                   
                   {/* NOVÉ POLE PRO KATEGORIE - Design 1:1 jako Description */}
                   <div className="mt-3">
-                    <Label className={deluxe ? "text-slate-200" : ""}>Klasifikace (RuleKit) <span className="opacity-50 font-normal text-xs ml-1">(volitelně)</span></Label>
+                    <Label className={deluxe ? "text-slate-200" : ""}>Klasifikace <span className="opacity-50 font-normal text-xs ml-1">(volitelně)</span></Label>
                     <div className="relative mt-1">
                       <input
                         type="text"

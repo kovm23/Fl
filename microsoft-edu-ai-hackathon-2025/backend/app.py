@@ -5,7 +5,7 @@ from services.processing import process_files
 from flask_cors import CORS
 
 app = Flask(__name__)
-CORS(app)
+CORS(app)#, resources={r"/*": {"origins": "*"}})
 
 ALLOWED_EXTENSIONS = {
     "text": {"pdf", "txt", "md", "csv"},
