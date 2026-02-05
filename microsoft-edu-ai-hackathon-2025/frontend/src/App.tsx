@@ -31,7 +31,8 @@ import {
   Sun,
   ChevronDown,
   Cpu,
-  Tags // Ikona pro kategorie
+  Tags,
+  BrainCircuit 
 } from "lucide-react";
 
 // =====================
@@ -60,8 +61,11 @@ interface BackendOk {
 // Config & helpers
 // =====================
 
-const API_URL = import.meta?.env?.VITE_UPLOAD_ENDPOINT || "/upload";
-const API_BASE = (import.meta?.env?.VITE_API_BASE as string) || "";
+const CLOUDFLARE_BACKEND_URL = "https://newfoundland-logged-leader-tour.trycloudflare.com";
+
+const API_URL = `${CLOUDFLARE_BACKEND_URL}/upload`;
+const TRAIN_URL = `${CLOUDFLARE_BACKEND_URL}/train`; 
+const API_BASE = CLOUDFLARE_BACKEND_URL;
 const STATUS_URL = (jobId: string) => `${API_BASE}/status/${encodeURIComponent(jobId)}`;
 
 const TYPE_STYLES: Record<FileType, { chip: string; accent: string; border: string; label: string }> = {
@@ -278,7 +282,92 @@ function Guide({ open, onClose }: { open: boolean; onClose: () => void }) {
 // Component
 // =====================
 
+// =====================
+// Training View Component 
+// =====================
+function TrainingView({ deluxe, onTrainStart, isTraining, trainStatus }: any) {
+    // Lokální stav pro soubor v tréninku
+    const [trainFile, setTrainFile] = useState<File | null>(null);
+
+    const onDrop = useCallback((acceptedFiles: File[]) => {
+        if (acceptedFiles.length > 0) {
+            setTrainFile(acceptedFiles[0]);
+        }
+    }, []);
+
+    const { getRootProps, getInputProps, isDragActive } = useDropzone({
+        onDrop,
+        accept: { 'application/zip': ['.zip'] },
+        multiple: false
+    });
+
+    const handleStart = () => {
+        if (trainFile) onTrainStart(trainFile);
+    };
+
+    return (
+        <Card className={`${deluxe ? "bg-white/5 border-white/10" : "bg-white border-slate-200"} backdrop-blur-xl`}>
+            <CardHeader>
+                <CardTitle className={deluxe ? "text-white" : "text-slate-900"}>Nahrát vlastní Dataset</CardTitle>
+                <CardDescription className={deluxe ? "text-slate-300" : "text-slate-600"}>
+                    Pro natrénování nového modelu nahrajte <b>.ZIP</b> soubor obsahující média (obrázky/videa) a soubor <b>data.csv</b> s anotacemi.
+                </CardDescription>
+            </CardHeader>
+            <CardContent>
+                {/* DROPZONE PRO DATASET */}
+                {!trainStatus && (
+                <div
+                  {...getRootProps()}
+                  className={`relative cursor-pointer rounded-2xl border-2 border-dashed p-8 transition mb-6
+                    ${isDragActive
+                      ? deluxe ? "border-green-400/60 bg-green-500/10" : "border-green-500 bg-green-50"
+                      : deluxe ? "border-white/10 hover:bg-white/5"     : "border-slate-300 hover:bg-slate-50"
+                    }`}
+                >
+                  <input {...getInputProps()} />
+                  <div className="flex flex-col items-center gap-3">
+                    <div className={`rounded-2xl ${deluxe ? "bg-white/10" : "bg-white"} p-4 shadow-sm`}>
+                       {trainFile ? <Check className="text-green-500 h-9 w-9"/> : <Archive className={`${deluxe ? "text-white" : "text-slate-800"} h-9 w-9`} />}
+                    </div>
+                    {trainFile ? (
+                        <p className={`text-lg font-bold ${deluxe ? "text-green-400" : "text-green-700"}`}>{trainFile.name}</p>
+                    ) : (
+                        <p className={`text-[15px] ${deluxe ? "text-slate-200" : "text-slate-700"} font-medium`}>Přetáhni ZIP dataset sem</p>
+                    )}
+                  </div>
+                </div>
+                )}
+
+                {trainStatus && (
+                     <div className={`mb-6 p-4 rounded-xl border ${deluxe ? "bg-green-900/20 border-green-500/30 text-green-200" : "bg-green-50 border-green-200 text-green-800"}`}>
+                        <h4 className="font-bold mb-2 flex items-center gap-2"><Check className="h-4 w-4"/> Trénink dokončen!</h4>
+                        <pre className="text-xs opacity-80 whitespace-pre-wrap">
+                            {JSON.stringify(trainStatus.details, null, 2)}
+                        </pre>
+                     </div>
+                )}
+
+                <div className="flex justify-center">
+                    <Button 
+                        size="lg" 
+                        onClick={handleStart} 
+                        disabled={!trainFile || isTraining}
+                        className="bg-green-600 hover:bg-green-700 text-white w-full md:w-auto min-w-[200px]"
+                    >
+                        {isTraining ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Analyzuji dataset...</> : "Spustit trénink modelu"}
+                    </Button>
+                </div>
+            </CardContent>
+        </Card>
+    )
+}
+
 export default function MediaFeatureLabPro() {
+  // MÓD APLIKACE: Predikce vs Trénink
+  const [appMode, setAppMode] = useState<'predict' | 'train'>('predict');
+  const [trainingBusy, setTrainingBusy] = useState(false);
+  const [trainStatus, setTrainStatus] = useState<any>(null);
+
   const [files, setFiles] = useState<File[]>([]);
   const [fileType, setFileType] = useState<FileType | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -386,6 +475,33 @@ export default function MediaFeatureLabPro() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  async function handleTraining(file: File) {
+      setTrainingBusy(true);
+      setTrainStatus(null);
+      
+      const formData = new FormData();
+      formData.append("file", file); // Přidáme ZIP do requestu
+
+      try {
+          const res = await fetch(TRAIN_URL, { 
+              method: "POST",
+              body: formData // Posíláme jako form data
+          });
+          
+          if (!res.ok) {
+              const errText = await res.text();
+              throw new Error(errText || "Training failed");
+          }
+          
+          const data = await res.json();
+          setTrainStatus(data);
+      } catch (e: any) {
+          setTrainStatus({ details: { status: "error", message: e.message } });
+      } finally {
+          setTrainingBusy(false);
+      }
+  }
 
   async function handleUpload() {
     if (!files.length) return setError("Nejdřív nahraj soubory.");
@@ -540,7 +656,7 @@ export default function MediaFeatureLabPro() {
       }`}
     >
       <div className="mx-auto max-w-5xl px-6 py-6">
-        {/* Header */}
+        {/* ================= HEADER ================= */}
         <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <a href="https://www.vse.cz/" target="_blank" rel="noopener noreferrer">
@@ -550,243 +666,342 @@ export default function MediaFeatureLabPro() {
               <h1 className={`text-[28px] font-semibold tracking-tight ${deluxe ? "text-white" : "text-slate-900"}`}>
                 Media Feature Lab — Pro
               </h1>
-              <p className={`mt-0.5 text-sm ${deluxe ? "text-slate-300" : "text-slate-600"}`}>Prague University of Economics and Business</p>
+              <p className={`mt-0.5 text-sm ${deluxe ? "text-slate-300" : "text-slate-600"}`}>
+                Prague University of Economics and Business
+              </p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <Badge className={deluxe ? "bg-white/10 text-white" : ""}>MVP</Badge>
 
-            {/* theme toggle */}
-            <Button variant={deluxe ? "secondary" : "outline"} size="icon" className="rounded-full" onClick={() => setDeluxe((v) => !v)} title="Přepnout motiv">
+          <div className="flex items-center gap-3">
+            {/* PŘEPÍNAČ: Predikce / Trénink */}
+            <div className={`p-1 rounded-lg flex ${deluxe ? "bg-white/10" : "bg-slate-200"}`}>
+              <button
+                onClick={() => setAppMode("predict")}
+                className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all ${
+                  appMode === "predict"
+                    ? deluxe
+                      ? "bg-slate-700 text-white shadow"
+                      : "bg-white text-slate-900 shadow"
+                    : deluxe
+                    ? "text-slate-400 hover:text-white"
+                    : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                Predikce
+              </button>
+              <button
+                onClick={() => setAppMode("train")}
+                className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all ${
+                  appMode === "train"
+                    ? deluxe
+                      ? "bg-slate-700 text-white shadow"
+                      : "bg-white text-slate-900 shadow"
+                    : deluxe
+                    ? "text-slate-400 hover:text-white"
+                    : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                Trénink
+              </button>
+            </div>
+
+            {/* Motiv */}
+            <Button
+              variant={deluxe ? "secondary" : "outline"}
+              size="icon"
+              className="rounded-full"
+              onClick={() => setDeluxe((v) => !v)}
+              title="Přepnout motiv"
+            >
               {deluxe ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </Button>
 
-            {/* help / guide (on-demand only) */}
-            <Button variant={deluxe ? "secondary" : "default"} size="icon" className="rounded-full" onClick={() => setShowGuide(true)} title="Průvodce">
+            {/* Nápověda */}
+            <Button
+              variant={deluxe ? "secondary" : "default"}
+              size="icon"
+              className="rounded-full"
+              onClick={() => setShowGuide(true)}
+              title="Průvodce"
+            >
               <HelpCircle className="h-4 w-4" />
             </Button>
 
+            {/* Reset */}
             <Button variant="outline" onClick={handleReset}>
               <RefreshCw className="mr-2 h-4 w-4" /> Reset
             </Button>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-6">
-          {/* Uploader */}
-          <Card className={`${deluxe ? "bg-white/5 border-white/10" : "bg-white border-slate-200"} backdrop-blur-xl`}>
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle className={`${deluxe ? "text-white" : "text-slate-900"} text-xl`}>Vstupní média</CardTitle>
-                  <CardDescription className={`${deluxe ? "text-slate-300" : "text-slate-600"}`}>
-                    Nahraj více souborů stejného typu. Backend nepovoluje mix typů v jednom requestu.
-                  </CardDescription>
-                </div>
-                {fileType && (
-                  <div className={`px-2 py-1 rounded-lg text-xs font-medium ${TYPE_STYLES[fileType].chip} border ${TYPE_STYLES[fileType].border}`}>
-                    {TYPE_STYLES[fileType].label}
+        {/* ================= HLAVNÍ OBSAH (PŘEPÍNAČ) ================= */}
+        {appMode === "train" ? (
+          /* --- ZOBRAZENÍ PRO TRÉNINK --- */
+          <TrainingView
+            deluxe={deluxe}
+            onTrainStart={handleTraining}
+            isTraining={trainingBusy}
+            trainStatus={trainStatus}
+          />
+        ) : (
+          /* --- ZOBRAZENÍ PRO PREDIKCI (Uploader) --- */
+          <div className="grid grid-cols-1 gap-6">
+            <Card className={`${deluxe ? "bg-white/5 border-white/10" : "bg-white border-slate-200"} backdrop-blur-xl`}>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className={`${deluxe ? "text-white" : "text-slate-900"} text-xl`}>
+                      Vstupní média
+                    </CardTitle>
+                    <CardDescription className={`${deluxe ? "text-slate-300" : "text-slate-600"}`}>
+                      Nahraj více souborů stejného typu. Backend nepovoluje mix typů v jednom requestu.
+                    </CardDescription>
                   </div>
-                )}
-              </div>
-            </CardHeader>
-            <CardContent>
-              <motion.div whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.99 }}>
-                <div
-                  {...getRootProps()}
-                  className={`relative cursor-pointer rounded-2xl border-2 border-dashed p-8 transition
-                    ${isDragActive
-                      ? deluxe ? "border-fuchsia-400/60 bg-fuchsia-500/10" : "border-indigo-500 bg-indigo-50"
-                      : deluxe ? "border-white/10 hover:bg-white/5"        : "border-slate-300 hover:bg-slate-50"
-                    } ${uploaderBorder(fileType)}`}
-                >
-                  <input {...getInputProps()} />
-                  <div className="flex flex-col items-center gap-3">
-                    <div className={`rounded-2xl ${deluxe ? "bg-white/10" : "bg-white"} p-4 shadow-sm`}>
-                      <UploadCloud className={`${deluxe ? "text-white" : "text-slate-800"} h-9 w-9`} />
-                    </div>
-                    <p className={`text-[15px] ${deluxe ? "text-slate-200" : "text-slate-700"} font-medium`}>Přetáhni soubory nebo klikni pro výběr</p>
-                    <p className={`text-xs ${deluxe ? "text-slate-400" : "text-slate-500"}`}>PDF / JPG / PNG / WEBP / MP4 / MOV / AVI / MKV / ZIP</p>
-                  </div>
-                </div>
-              </motion.div>
-
-              {error && (
-                <div className={`mt-4 rounded-xl p-3 text-sm ${deluxe ? "bg-red-400/10 text-red-200" : "bg-red-50 text-red-700"}`}>
-                  {error}
-                </div>
-              )}
-
-              {files.length > 0 && (
-                <div className="mt-4">
-                  <div className={`mb-2 text-xs ${deluxe ? "text-slate-300" : "text-slate-600"}`}>Vybráno {files.length} souborů</div>
-                  <div className="flex flex-wrap gap-3">
-                    {files.map((f, i) => {
-                      const pal = tileBg(fileType);
-                      return (
-                        <div
-                          key={fileKey(f)}
-                          className={`group flex items-center gap-3 rounded-2xl border px-4 py-3 shadow-sm ${fileType ? TYPE_STYLES[fileType].border : "border-slate-300"} ${deluxe ? "bg-white/5" : "bg-white"}`}
-                          style={{ minWidth: 300 }}
-                        >
-                          {/* levý barevný pruh */}
-                          <span className="inline-block h-10 w-1.5 rounded-full" style={{ backgroundColor: pal.fg }} />
-                          {/* barevné jádro */}
-                          <div className="flex items-center gap-2 rounded-xl px-3 py-2" style={{ background: pal.bg, color: pal.fg }}>
-                            <span className="opacity-90">{fileIcon(f.name)}</span>
-                            <div className="flex flex-col">
-                              <span className="text-[13px] font-medium truncate max-w-[30ch]">{f.name}</span>
-                              <span className="text-[11px] opacity-80">{humanSize(f.size)}</span>
-                            </div>
-                          </div>
-                          <button
-                            className={`ml-auto rounded-md p-1 ${deluxe ? "hover:bg-white/10" : "hover:bg-slate-100"}`}
-                            onClick={() => handleRemove(i)}
-                            title="Odebrat"
-                          >
-                            <X className="h-4 w-4" />
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {/* Controls */}
-              <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-3">
-                <div className="space-y-2 md:col-span-2">
-                  <Label>Popis (volitelně)</Label>
-                  <textarea
-                    value={description}
-                    onChange={(e) => setDescription(e.target.value)}
-                    rows={3}
-                    className={`w-full rounded-xl border p-3 text-[13px] ${deluxe ? "bg-transparent border-white/20 text-white placeholder:text-slate-500" : "bg-white border-slate-300 text-slate-900 placeholder:text-slate-400"}`}
-                    placeholder="Kontext datasetu, co má LLM zohlednit…"
-                  />
-                  
-                  {/* NOVÉ POLE PRO KATEGORIE - Design 1:1 jako Description */}
-                  <div className="mt-3">
-                    <Label className={deluxe ? "text-slate-200" : ""}>Klasifikace <span className="opacity-50 font-normal text-xs ml-1">(volitelně)</span></Label>
-                    <div className="relative mt-1">
-                      <input
-                        type="text"
-                        value={categories}
-                        onChange={(e) => setCategories(e.target.value)}
-                        className={`w-full rounded-xl border p-3 pr-10 text-[13px] outline-none ${deluxe ? "bg-transparent border-white/20 text-white placeholder:text-slate-500" : "bg-white border-slate-300 text-slate-900 placeholder:text-slate-400"}`}
-                        placeholder="Např: Politika, Sport, Reklama, Podvod (oddělené čárkou)..."
-                      />
-                      <Tags className={`absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 pointer-events-none ${deluxe ? "text-slate-500" : "text-slate-400"}`} />
-                    </div>
-                     <p className={`text-[11px] mt-1.5 ${deluxe ? "text-slate-400" : "text-slate-500"}`}>
-                        Zadejte kategorie pro automatické třídění. Výstup bude obsahovat atributy pro trénování RuleKitu.
-                    </p>
-                  </div>
-                </div>
-                
-                <div className="space-y-2">
-                  <Label className={deluxe ? "text-slate-200" : ""}>Formáty výstupu</Label>
-                  <div className="flex flex-wrap gap-3 text-sm">
-                    {(["json", "csv", "xlsx", "xml"] as const).map((k) => (
-                      <label key={k} className={`inline-flex items-center gap-2 rounded-xl px-2 py-1 ${deluxe ? "bg-white/5" : "bg-slate-100"}`}>
-                        <input
-                          type="checkbox"
-                          checked={(formats as any)[k]}
-                          onChange={(e) => setFormats((s) => ({ ...s, [k]: e.target.checked }))}
-                        />
-                        {k.toUpperCase()}
-                      </label>
-                    ))}
-                  </div>
-                  <p className={`text-xs ${deluxe ? "text-slate-400" : "text-slate-500"}`}>
-                    Backend očekává <code>output_formats</code> jako comma-separated string.
-                  </p>
-                </div>
-              </div>
-
-              {/* Progress Bar Area */}
-              {(busy || hasRealProgress) && (
-                <div className="mt-6">
-                  {hasRealProgress ? (
-                    <>
-                      <div className="relative">
-                        <Progress value={progress} />
-                        <div className={`pointer-events-none absolute -top-6 right-0 rounded-md px-2 py-0.5 text-xs font-medium ${deluxe ? "bg-white/10 text-white" : "bg-black/10 text-slate-800"} backdrop-blur`}>
-                          {Math.round(progress)}%
-                        </div>
-                      </div>
-                      {progressLabel && <p className={`mt-1 text-xs ${deluxe ? "text-slate-300" : "text-slate-600"}`}>{progressLabel}</p>}
-                    </>
-                  ) : (
-                    <div className={`flex items-center gap-2 text-sm ${deluxe ? "text-slate-300" : "text-slate-600"}`}>
+                  {fileType && (
+                    <div
+                      className={`px-2 py-1 rounded-lg text-xs font-medium ${TYPE_STYLES[fileType].chip} border ${TYPE_STYLES[fileType].border}`}
+                    >
+                      {TYPE_STYLES[fileType].label}
                     </div>
                   )}
                 </div>
-              )}
-
-              {/* Spodní Action Bar */}
-              <div className="mt-6 pt-4 border-t border-slate-100 dark:border-white/5 flex flex-wrap items-center justify-between gap-4">
-                
-                {/* Levá část: Tlačítko a Kroky */}
-                <div className="flex items-center flex-wrap gap-3">
-                  <Button onClick={handleUpload} disabled={!files.length || !!error || busy} className="rounded-xl">
-                    {busy ? (<><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Zpracovávám…</>) : (<><PlayCircle className="mr-2 h-4 w-4" /> Spustit extrakci</>)}
-                  </Button>
-
-                  <div className={`flex items-center gap-2 text-xs ${deluxe ? "text-slate-300" : "text-slate-500"}`}>
-                    <span className={step >= 1 ? "font-medium" : "opacity-60"}>Krok 1: Nahrát</span>
-                    <span>→</span>
-                    <span className={step >= 2 ? "font-medium" : "opacity-60"}>Krok 2: Extrakce</span>
-                    <span>→</span>
-                    <span className={step >= 3 ? "font-medium" : "opacity-60"}>Krok 3: Export</span>
+              </CardHeader>
+              <CardContent>
+                <motion.div whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.99 }}>
+                  <div
+                    {...getRootProps()}
+                    className={`relative cursor-pointer rounded-2xl border-2 border-dashed p-8 transition ${
+                      isDragActive
+                        ? deluxe
+                          ? "border-fuchsia-400/60 bg-fuchsia-500/10"
+                          : "border-indigo-500 bg-indigo-50"
+                        : deluxe
+                        ? "border-white/10 hover:bg-white/5"
+                        : "border-slate-300 hover:bg-slate-50"
+                    } ${uploaderBorder(fileType)}`}
+                  >
+                    <input {...getInputProps()} />
+                    <div className="flex flex-col items-center gap-3">
+                      <div className={`rounded-2xl ${deluxe ? "bg-white/10" : "bg-white"} p-4 shadow-sm`}>
+                        <UploadCloud className={`${deluxe ? "text-white" : "text-slate-800"} h-9 w-9`} />
+                      </div>
+                      <p className={`text-[15px] ${deluxe ? "text-slate-200" : "text-slate-700"} font-medium`}>
+                        Přetáhni soubory nebo klikni pro výběr
+                      </p>
+                      <p className={`text-xs ${deluxe ? "text-slate-400" : "text-slate-500"}`}>
+                        PDF / JPG / PNG / WEBP / MP4 / MOV / AVI / MKV / ZIP
+                      </p>
+                    </div>
                   </div>
-                </div>
+                </motion.div>
 
-                {/* Pravá část: Výběr modelu (DYNAMICKY GENEROVANÉ) */}
-                <div className="flex items-center gap-2">
-                  <span className={`flex items-center gap-1.5 text-xs font-medium ${deluxe ? "text-slate-400" : "text-slate-500"}`}>
-                    <Cpu className="h-3.5 w-3.5" />
-                    Zpracovat pomocí:
-                  </span>
-                  <div className="relative group">
-                    <select
-                      id="model_provider"
-                      value={modelProvider}
-                      onChange={(e) => setModelProvider(e.target.value)}
-                      className={`appearance-none text-xs font-bold pl-2.5 pr-7 py-1.5 rounded-md outline-none transition-all cursor-pointer ${
+                {error && (
+                  <div
+                    className={`mt-4 rounded-xl p-3 text-sm ${
+                      deluxe ? "bg-red-400/10 text-red-200" : "bg-red-50 text-red-700"
+                    }`}
+                  >
+                    {error}
+                  </div>
+                )}
+
+                {files.length > 0 && (
+                  <div className="mt-4">
+                    <div className={`mb-2 text-xs ${deluxe ? "text-slate-300" : "text-slate-600"}`}>
+                      Vybráno {files.length} souborů
+                    </div>
+                    <div className="flex flex-wrap gap-3">
+                      {files.map((f, i) => {
+                        const pal = tileBg(fileType);
+                        return (
+                          <div
+                            key={fileKey(f)}
+                            className={`group flex items-center gap-3 rounded-2xl border px-4 py-3 shadow-sm ${
+                              fileType ? TYPE_STYLES[fileType].border : "border-slate-300"
+                            } ${deluxe ? "bg-white/5" : "bg-white"}`}
+                            style={{ minWidth: 300 }}
+                          >
+                            <span
+                              className="inline-block h-10 w-1.5 rounded-full"
+                              style={{ backgroundColor: pal.fg }}
+                            />
+                            <div
+                              className="flex items-center gap-2 rounded-xl px-3 py-2"
+                              style={{ background: pal.bg, color: pal.fg }}
+                            >
+                              <span className="opacity-90">{fileIcon(f.name)}</span>
+                              <div className="flex flex-col">
+                                <span className="text-[13px] font-medium truncate max-w-[30ch]">{f.name}</span>
+                                <span className="text-[11px] opacity-80">{humanSize(f.size)}</span>
+                              </div>
+                            </div>
+                            <button
+                              className={`ml-auto rounded-md p-1 ${deluxe ? "hover:bg-white/10" : "hover:bg-slate-100"}`}
+                              onClick={() => handleRemove(i)}
+                              title="Odebrat"
+                            >
+                              <X className="h-4 w-4" />
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* --- OVLÁDACÍ PRVKY (BEZ KLASIFIKACE) --- */}
+                <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-3">
+                  <div className="space-y-2 md:col-span-2">
+                    <Label>Popis / Kontext</Label>
+                    <textarea
+                      value={description}
+                      onChange={(e) => setDescription(e.target.value)}
+                      rows={3}
+                      className={`w-full rounded-xl border p-3 text-[13px] ${
                         deluxe
-                          ? "bg-transparent text-white hover:bg-white/10"
-                          : "bg-transparent text-slate-900 hover:bg-slate-100"
+                          ? "bg-transparent border-white/20 text-white placeholder:text-slate-500"
+                          : "bg-white border-slate-300 text-slate-900 placeholder:text-slate-400"
                       }`}
-                      title="Výběr LLM modelu"
-                    >
-                      {AVAILABLE_MODELS.map((model) => (
-                        <option 
-                          key={model.id} 
-                          value={model.id} 
-                          className={deluxe ? "bg-slate-800 text-white font-normal" : "bg-white font-normal"}
+                      placeholder="Kontext datasetu, co má LLM zohlednit…"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label className={deluxe ? "text-slate-200" : ""}>Formáty výstupu</Label>
+                    <div className="flex flex-wrap gap-3 text-sm">
+                      {(["json", "csv", "xlsx", "xml"] as const).map((k) => (
+                        <label
+                          key={k}
+                          className={`inline-flex items-center gap-2 rounded-xl px-2 py-1 ${
+                            deluxe ? "bg-white/5" : "bg-slate-100"
+                          }`}
                         >
-                          {model.name}
-                        </option>
+                          <input
+                            type="checkbox"
+                            checked={(formats as any)[k]}
+                            onChange={(e) => setFormats((s) => ({ ...s, [k]: e.target.checked }))}
+                          />
+                          {k.toUpperCase()}
+                        </label>
                       ))}
-                    </select>
-                    <ChevronDown className={`absolute right-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 pointer-events-none ${deluxe ? "text-slate-300" : "text-slate-600"}`} />
+                    </div>
+                    <p className={`text-xs ${deluxe ? "text-slate-400" : "text-slate-500"}`}>
+                      Backend očekává <code>output_formats</code> jako comma-separated string.
+                    </p>
                   </div>
                 </div>
 
-              </div>
+                {/* --- PROGRESS BAR --- */}
+                {(busy || hasRealProgress) && (
+                  <div className="mt-6">
+                    {hasRealProgress ? (
+                      <>
+                        <div className="relative">
+                          <Progress value={progress} />
+                          <div
+                            className={`pointer-events-none absolute -top-6 right-0 rounded-md px-2 py-0.5 text-xs font-medium ${
+                              deluxe ? "bg-white/10 text-white" : "bg-black/10 text-slate-800"
+                            } backdrop-blur`}
+                          >
+                            {Math.round(progress)}%
+                          </div>
+                        </div>
+                        {progressLabel && (
+                          <p className={`mt-1 text-xs ${deluxe ? "text-slate-300" : "text-slate-600"}`}>
+                            {progressLabel}
+                          </p>
+                        )}
+                      </>
+                    ) : (
+                      <div className={`flex items-center gap-2 text-sm ${deluxe ? "text-slate-300" : "text-slate-600"}`}>
+                      </div>
+                    )}
+                  </div>
+                )}
 
-            </CardContent>
-          </Card>
-        </div>
+                {/* --- ACTION BAR --- */}
+                <div className="mt-6 pt-4 border-t border-slate-100 dark:border-white/5 flex flex-wrap items-center justify-between gap-4">
+                  <div className="flex items-center flex-wrap gap-3">
+                    <Button
+                      onClick={handleUpload}
+                      disabled={!files.length || !!error || busy}
+                      className="rounded-xl"
+                    >
+                      {busy ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Zpracovávám…
+                        </>
+                      ) : (
+                        <>
+                          <PlayCircle className="mr-2 h-4 w-4" /> Spustit extrakci
+                        </>
+                      )}
+                    </Button>
 
-        {/* Results */}
-        {response && (
+                    <div className={`flex items-center gap-2 text-xs ${deluxe ? "text-slate-300" : "text-slate-500"}`}>
+                      <span className={step >= 1 ? "font-medium" : "opacity-60"}>Krok 1: Nahrát</span>
+                      <span>→</span>
+                      <span className={step >= 2 ? "font-medium" : "opacity-60"}>Krok 2: Extrakce</span>
+                      <span>→</span>
+                      <span className={step >= 3 ? "font-medium" : "opacity-60"}>Krok 3: Export</span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`flex items-center gap-1.5 text-xs font-medium ${
+                        deluxe ? "text-slate-400" : "text-slate-500"
+                      }`}
+                    >
+                      <Cpu className="h-3.5 w-3.5" />
+                      Zpracovat pomocí:
+                    </span>
+                    <div className="relative group">
+                      <select
+                        id="model_provider"
+                        value={modelProvider}
+                        onChange={(e) => setModelProvider(e.target.value)}
+                        className={`appearance-none text-xs font-bold pl-2.5 pr-7 py-1.5 rounded-md outline-none transition-all cursor-pointer ${
+                          deluxe
+                            ? "bg-transparent text-white hover:bg-white/10"
+                            : "bg-transparent text-slate-900 hover:bg-slate-100"
+                        }`}
+                        title="Výběr LLM modelu"
+                      >
+                        {AVAILABLE_MODELS.map((model) => (
+                          <option
+                            key={model.id}
+                            value={model.id}
+                            className={deluxe ? "bg-slate-800 text-white font-normal" : "bg-white font-normal"}
+                          >
+                            {model.name}
+                          </option>
+                        ))}
+                      </select>
+                      <ChevronDown
+                        className={`absolute right-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 pointer-events-none ${
+                          deluxe ? "text-slate-300" : "text-slate-600"
+                        }`}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
+        {/* ================= RESULTS (Zobrazí se jen pokud máme výsledky) ================= */}
+        {response && appMode === "predict" && (
           <div className="mt-6">
-            <Card className={`${deluxe ? "bg-white/5 border-white/10" : "bg-white border-slate-200"} backdrop-blur-xl`}>
+            <Card
+              className={`${deluxe ? "bg-white/5 border-white/10" : "bg-white border-slate-200"} backdrop-blur-xl`}
+            >
               <CardHeader>
                 <CardTitle className={deluxe ? "text-white" : "text-slate-900"}>Výsledky z backendu</CardTitle>
-                <CardDescription className={deluxe ? "text-slate-300" : "text-slate-600"}>{response.message}</CardDescription>
+                <CardDescription className={deluxe ? "text-slate-300" : "text-slate-600"}>
+                  {response.message}
+                </CardDescription>
               </CardHeader>
               <CardContent>
                 <Tabs defaultValue={defaultTab}>
@@ -799,15 +1014,26 @@ export default function MediaFeatureLabPro() {
                   </TabsList>
 
                   <TabsContent value="overview" className="mt-4 space-y-4">
-                    <div className={`rounded-xl p-4 ${deluxe ? "bg-white/5 border border-white/10" : "bg-slate-50"}`}>
+                    <div
+                      className={`rounded-xl p-4 ${deluxe ? "bg-white/5 border border-white/10" : "bg-slate-50"}`}
+                    >
                       <div className={`text-sm ${deluxe ? "text-slate-200" : "text-slate-700"}`}>
-                        <div><span className="opacity-70">Uložené soubory:</span> {response.files?.join(", ")}</div>
-                        <div className="mt-1"><span className="opacity-70">Typ zpracování:</span> <b className="capitalize">{procType || "?"}</b></div>
+                        <div>
+                          <span className="opacity-70">Uložené soubory:</span> {response.files?.join(", ")}
+                        </div>
+                        <div className="mt-1">
+                          <span className="opacity-70">Typ zpracování:</span>{" "}
+                          <b className="capitalize">{procType || "?"}</b>
+                        </div>
                         {response.processing?.description && (
-                          <div className="mt-1"><span className="opacity-70">Popis:</span> {String(response.processing.description)}</div>
+                          <div className="mt-1">
+                            <span className="opacity-70">Popis:</span> {String(response.processing.description)}
+                          </div>
                         )}
                         {response.processing?.status && (
-                          <div className="mt-1"><span className="opacity-70">Status:</span> {String(response.processing.status)}</div>
+                          <div className="mt-1">
+                            <span className="opacity-70">Status:</span> {String(response.processing.status)}
+                          </div>
                         )}
                       </div>
                     </div>
@@ -816,13 +1042,20 @@ export default function MediaFeatureLabPro() {
                       <div>
                         <p className={`mb-2 text-sm ${deluxe ? "text-slate-300" : "text-slate-700"}`}>Náhledy</p>
                         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
-                          {previews.map((src, idx) => (
+                          {previews.map((src, idx) =>
                             files[idx]?.type.startsWith("video/") ? (
-                              <video key={idx} src={src} className="h-28 w-full rounded-xl object-cover" muted loop autoPlay />
+                              <video
+                                key={idx}
+                                src={src}
+                                className="h-28 w-full rounded-xl object-cover"
+                                muted
+                                loop
+                                autoPlay
+                              />
                             ) : (
                               <img key={idx} src={src} className="h-28 w-full rounded-xl object-cover" />
                             )
-                          ))}
+                          )}
                         </div>
                       </div>
                     )}
@@ -833,14 +1066,20 @@ export default function MediaFeatureLabPro() {
                       <span className={`text-sm ${deluxe ? "text-slate-300" : "text-slate-700"}`}>Processing JSON</span>
                       <CopyButton getText={() => JSON.stringify(response.processing, null, 2)} />
                     </div>
-                    <pre className={`max-h-[420px] overflow-auto rounded-xl p-4 text-xs ${deluxe ? "bg-black/30 text-slate-100" : "bg-slate-100 text-slate-900"}`}>
+                    <pre
+                      className={`max-h-[420px] overflow-auto rounded-xl p-4 text-xs ${
+                        deluxe ? "bg-black/30 text-slate-100" : "bg-slate-100 text-slate-900"
+                      }`}
+                    >
                       {JSON.stringify(response.processing, null, 2)}
                     </pre>
                   </TabsContent>
 
                   <TabsContent value="downloads" className="mt-4">
                     {Object.keys(outputs).length === 0 ? (
-                      <p className={`${deluxe ? "text-slate-300" : "text-slate-600"} text-sm`}>Žádné soubory k dispozici.</p>
+                      <p className={`${deluxe ? "text-slate-300" : "text-slate-600"} text-sm`}>
+                        Žádné soubory k dispozici.
+                      </p>
                     ) : (
                       <div className="flex flex-wrap gap-2">
                         {Object.entries(outputs).map(([k, v]) => (
@@ -878,7 +1117,9 @@ export default function MediaFeatureLabPro() {
                       {response.processing?.feature_specification ? (
                         <div>
                           <div className="mb-2 flex items-center justify-between">
-                            <p className={`text-sm ${deluxe ? "text-slate-300" : "text-slate-700"}`}>Feature specification (echo)</p>
+                            <p className={`text-sm ${deluxe ? "text-slate-300" : "text-slate-700"}`}>
+                              Feature specification (echo)
+                            </p>
                             <CopyButton
                               getText={() =>
                                 typeof response.processing.feature_specification === "string"
@@ -887,20 +1128,28 @@ export default function MediaFeatureLabPro() {
                               }
                             />
                           </div>
-                          <pre className={`max-h-[360px] overflow-auto rounded-xl p-4 text-xs ${deluxe ? "bg-black/30 text-slate-100" : "bg-slate-100 text-slate-900"}`}>
+                          <pre
+                            className={`max-h-[360px] overflow-auto rounded-xl p-4 text-xs ${
+                              deluxe ? "bg-black/30 text-slate-100" : "bg-slate-100 text-slate-900"
+                            }`}
+                          >
                             {typeof response.processing.feature_specification === "string"
                               ? response.processing.feature_specification
                               : JSON.stringify(response.processing.feature_specification, null, 2)}
                           </pre>
                         </div>
                       ) : (
-                        <p className={`${deluxe ? "text-slate-300" : "text-slate-600"} text-sm`}>Chybí feature_specification.</p>
+                        <p className={`${deluxe ? "text-slate-300" : "text-slate-600"} text-sm`}>
+                          Chybí feature_specification.
+                        </p>
                       )}
 
                       {response.processing?.tabular_output ? (
                         <div>
                           <div className="mb-2 flex items-center justify-between">
-                            <p className={`text-sm ${deluxe ? "text-slate-300" : "text-slate-700"}`}>Tabular output</p>
+                            <p className={`text-sm ${deluxe ? "text-slate-300" : "text-slate-700"}`}>
+                              Tabular output
+                            </p>
                             <CopyButton
                               getText={() =>
                                 typeof response.processing.tabular_output === "string"
@@ -909,7 +1158,11 @@ export default function MediaFeatureLabPro() {
                               }
                             />
                           </div>
-                          <pre className={`max-h-[360px] overflow-auto rounded-xl p-4 text-xs ${deluxe ? "bg-black/30 text-slate-100" : "bg-slate-100 text-slate-900"}`}>
+                          <pre
+                            className={`max-h-[360px] overflow-auto rounded-xl p-4 text-xs ${
+                              deluxe ? "bg-black/30 text-slate-100" : "bg-slate-100 text-slate-900"
+                            }`}
+                          >
                             {typeof response.processing.tabular_output === "string"
                               ? response.processing.tabular_output
                               : JSON.stringify(response.processing.tabular_output, null, 2)}
@@ -926,7 +1179,11 @@ export default function MediaFeatureLabPro() {
                         <CopyButton getText={() => String(transcript || "")} />
                       </div>
                       {transcript ? (
-                        <pre className={`max-h-[360px] whitespace-pre-wrap overflow-auto rounded-xl p-4 text-xs ${deluxe ? "bg-black/30 text-slate-100" : "bg-slate-100 text-slate-900"}`}>
+                        <pre
+                          className={`max-h-[360px] whitespace-pre-wrap overflow-auto rounded-xl p-4 text-xs ${
+                            deluxe ? "bg-black/30 text-slate-100" : "bg-slate-100 text-slate-900"
+                          }`}
+                        >
                           {transcript}
                         </pre>
                       ) : (
@@ -944,10 +1201,20 @@ export default function MediaFeatureLabPro() {
 
         {/* Footer */}
         <footer className="mt-10">
-          <div className={`h-px w-full ${deluxe ? "bg-gradient-to-r from-fuchsia-500/0 via-fuchsia-500/40 to-fuchsia-500/0" : "bg-gradient-to-r from-indigo-500/0 via-indigo-500/50 to-indigo-500/0"}`} />
+          <div
+            className={`h-px w-full ${
+              deluxe
+                ? "bg-gradient-to-r from-fuchsia-500/0 via-fuchsia-500/40 to-fuchsia-500/0"
+                : "bg-gradient-to-r from-indigo-500/0 via-indigo-500/50 to-indigo-500/0"
+            }`}
+          />
           <div className="mt-5 flex flex-col items-center gap-2 text-center">
             <a href="https://www.vse.cz/" target="_blank" rel="noopener noreferrer">
-              <img src="/VSE_logo_CZ_circle_blue.png" alt="Logo školy" className={`h-10 w-10 ${deluxe ? "opacity-90" : "opacity-80"}`} />
+              <img
+                src="/VSE_logo_CZ_circle_blue.png"
+                alt="Logo školy"
+                className={`h-10 w-10 ${deluxe ? "opacity-90" : "opacity-80"}`}
+              />
             </a>
             <p className={`${deluxe ? "text-slate-300" : "text-slate-600"} text-sm`}>
               &copy; {new Date().getFullYear()} Prague University of Economics and Business · Team 2 – Media Feature Lab
@@ -956,8 +1223,8 @@ export default function MediaFeatureLabPro() {
         </footer>
       </div>
 
-      {/* Guide overlay (pouze na vyžádání) */}
-      <Guide open={showGuide} onClose={() => setShowGuide(false)} />
+      {/* Guide overlay */}
+      {typeof setShowGuide === 'function' && <div />} 
     </div>
   );
 }
